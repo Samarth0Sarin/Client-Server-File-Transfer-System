@@ -1,0 +1,139 @@
+/*
+    Author: Samarth Sarin
+    Date: 2023-06-04
+    Purpose: Server side code for recieving a file name, and passing the file data over to connected clients via a socket.
+    Compiler: gcc o -server server.c
+    Running: ./server & //Runs as a process, independent from the console
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <libgen.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <limits.h>
+#include <errno.h>
+#define SF "client_to_server"
+#define CF "server_to_client"
+#define PIPE_BUFSIZE 1024
+
+
+// making a "packet" of information
+struct data
+{
+        int nbytes;
+        char bytestring[1024];
+};
+
+// my main method
+int main( int argc, char *argv[] )
+{
+        int fd_to_server, fd_to_client, done1 = 0;
+        int destination;
+        char msgbuf[PIPE_BUFSIZE];
+        char filename[PIPE_BUFSIZE];
+        char all_done[PIPE_BUFSIZE] = "ALL DONE\n";
+        // making instance to pass it through the FIFO)
+        struct data d;
+
+
+        // check if the already  CLIENT-to-SERVER FIFO exists
+        if(access(SF, F_OK) != 0) {
+                printf("# New server FIFO #\n");
+                if(mkfifo(SF,0666) == -1) {
+                        if(errno != EEXIST)
+                        {
+                                perror("Couldn't create CLIENT-to-SERVER FIFO\n");
+                                exit(1);
+                        }
+                }
+        }
+        // check if the already SERVER-to-CLIENT FIFO exists
+        if (access(CF, F_OK) != 0) {
+                printf("# New client FIFO #\n");
+                if(mkfifo(CF,0666) == -1) {
+                        if(errno != EEXIST)
+                        {
+                                perror("Couldn't create SERVER-to-CLIENT FIFO\n");
+                                exit(1);
+                        }
+                }
+        }
+
+
+        // enabling the two FIFOs
+       // The fd for CLIENT-to-SERVER is fd to server.
+      if( (fd_to_server = open( SF, O_RDWR )) < 0 )
+        {
+                perror( SF );
+                exit(1);
+        }
+
+        // The fd for SERVER-to-CLIENT is fd to client
+        if( (fd_to_client = open(CF, O_RDWR)) < 0 )
+        {
+                perror( CF );
+                exit(1);
+        }
+
+
+        // An endless while loop that doesn't end until the server side does
+        // Each loop iteration corresponds to a connection with a single client.
+                while(!done1) {
+                char new_filename[100] = "file_";
+                int done2 = 0;
+
+      // READ FILENAME FROM FIFO
+                if(read(fd_to_server, msgbuf, PIPE_BUFSIZE) == -1) {
+                        perror("Error reading filename from client-to-server FIFO!\n");
+                        exit(1);
+                }
+
+       // making "clone" of file
+                strcat(new_filename, msgbuf);
+      // Opening the file
+                destination = open(new_filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+                if( destination < 0 ) {
+                        perror("There was an error opening the destination file!\n");
+                        exit(1);
+                }
+
+
+        // An loop to keep connection client-to-server FIFO running
+                while( !done2 )
+                {
+        // read from client_to_server FIFO
+                        if( read( fd_to_server, &d, sizeof(struct data) ) < 0 )
+                        {
+                                perror( "The server experienced an error reading from the client-to-server FIFO!\n" );
+                                exit(1);
+                        }
+
+          // Writing it into the destination file
+                        if(write(destination, d.bytestring, d.nbytes) == -1) {
+                                perror("There was an error writing to the destination file!\n");
+                                exit(1);
+                        }
+
+          // checking if a packet contains nbytes (read) less than the PIPE_BUFSIZE,
+
+                        if(d.nbytes < PIPE_BUFSIZE) {
+                                done2 = 1;
+                        }
+                }
+
+                // Writing an "ALL DONE" message to the server-to-client FIFO
+                if(write(fd_to_client, all_done, PIPE_BUFSIZE) == -1) {
+                        perror("There was an error writing to the SERVER-to-CLIENT FIFO!\n");
+                        exit(1);
+                }
+        }
+
+        // closing the destinantion file
+        close(destination);
+        return 0;
+
+}
