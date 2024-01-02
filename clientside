@@ -1,0 +1,137 @@
+/*
+    Author: Samarth Sarin
+    Date: 2023-06-04
+    Purpose: Client-side code for connecting to a serverside socket and receiving file information and then writing to a file
+    Compiler: gcc o -client client.c
+    Running: ./client /filepath
+*/
+#include <stdio.h>
+#include <stdlib.h>
+#include <libgen.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+#include <limits.h>
+#include <errno.h>
+#define SF "client_to_server"
+#define CF "server_to_client"
+#define PIPE_BUFSIZE 1024
+
+
+// our "packet" of information
+struct data
+{
+        int nbytes;
+        char bytestring[1024];
+};
+
+//my main method
+int main (int argc, char *argv[])
+        {
+        int fd_to_server, fd_to_client, source;
+        char msgbuf[PIPE_BUFSIZE];
+        struct data d;
+        int done = 0;
+        char filename[PIPE_BUFSIZE];
+        char tempbuf[PIPE_BUFSIZE];
+
+
+        // checking arguments
+        if (argc < 2) {
+                printf( "Usage: send-msg msg...\n" );
+                exit(1);
+        }
+
+
+        // checking if the CLIENT-to-SERVER FIFO exists
+        if(access(SF,F_OK) != 0) {
+                perror("CLIENT-to-SERVER not found. BYE!\n");
+                exit(1);
+        }
+        // checking if the SERVER-to-CLIENT FIFO exists
+        if (access(CF,F_OK) != 0) {
+                perror("SERVER-to-CLIENT not found. BYE!\n");
+                exit(1);
+        }
+
+
+        // opening up both FIFOs
+        if ((fd_to_server = open( SF, O_WRONLY)) < 0) {
+                perror(SF);
+                exit(1);
+        }
+
+        // fd_to_client is the fd for SERVER-to-CLIENT
+        if ((fd_to_client = open(CF, O_RDONLY)) < 0) {
+                perror(CF);
+                exit(1);
+        }
+
+
+        // open the file with the filename given by the user.
+        source = open(argv[1], O_RDONLY);
+
+        if( source < 0 ) {
+                perror("There was an error opening the source file!\n");
+                exit(1);
+        }
+
+
+        // send the filename to the CLIENT-to-SERVER FIFO
+        if (strlen(argv[1]) > PIPE_BUFSIZE) {
+                perror("Filename too long.\n");
+                exit(1);
+        } else {
+        //  if not then  write it to the CLIENT-to-SERVER FIFO
+                strcpy(filename, basename(argv[1]));
+                write( fd_to_server, filename, PIPE_BUFSIZE );
+        }
+
+
+        int bytes_read;
+
+        // A while loop to read the content from the client-to-server
+        while(!done)
+        {
+                // read as many as PIPE_BUFSIZE number of bytes from the source
+                // Store the resulting number of the read(), into the variable 'bytes_read'
+                bytes_read = read(source, d.bytestring, PIPE_BUFSIZE);
+
+                // bytes_read should be a non-negative number (including 0). Otherwise if -1, then throw an error.
+                if( bytes_read == -1) {
+                        perror("There was an error reading from the source file!\n");
+                        exit(1);
+                } else {
+                        // update the packet d's nbytes field with the bytes_read information
+                        d.nbytes = bytes_read;
+                }
+
+                // write the packet d into the server
+                if( write(fd_to_server, &d, sizeof(struct data)) == -1) {
+                        perror("There was an error writing to the FIFO!\n");
+                        exit(1);
+                }
+
+                // checking if bytes_read are less than Pipe_bufsize
+                if(bytes_read < PIPE_BUFSIZE) {
+                        done = 1;
+                }
+        }
+
+        // when client receives an "ALL DONE" message, then print "OK, FINISHED."
+        if( read(fd_to_client, tempbuf, PIPE_BUFSIZE) == -1 ) {
+                perror("Error receiving ALL DONE msg from server.\n");
+                exit(1);
+        } else {
+                printf("OK, FINISHED.\n");
+        }
+
+
+        // finally, close 'sourcefile'
+        close(source);
+        return 0;
+}
+
+
